@@ -4,8 +4,8 @@
 # > Make sure it's a PARAMETER
 #
 
-import sys, re, json, random
-from enum import Enum
+import json
+import sys
 import requests
 
 # Game Class + Game Exceptions --> world.py
@@ -34,6 +34,9 @@ class IllegalChoice(GameException):
 class IllegalInput(GameException):
     pass
 
+class NoSuchPlayer(GameException):
+    pass
+
 
 class Game:
     def sendPostRequestToServer(self, wantedAction, body):
@@ -46,6 +49,16 @@ class Game:
 
     def __init__(self):
         pass
+
+    def getBasicDetailsForLogin(self, playerId):
+        details = self.sendPostRequestToServer("getBasicDetailsForLogin", {
+            "playerId": playerId
+        })
+
+        if details["status"] == "FAILURE":
+            raise NoSuchPlayer(f"NO SUCH PLAYER WITH ID: {playerId}")
+
+        return details["name"], details["time"]
 
     def reformatTime(self, hour):
         return str(hour).zfill(2) + ":00"
@@ -61,7 +74,7 @@ class Game:
         choice = input()
         if self.isValidMenuChoice(choice, menu):
             if choice == '*':
-                details = self.sendPostRequestToServer("getPlayerById", {"id": playerId})
+                details = self.sendPostRequestToServer("getPlayerById", {"_id": playerId})
                 print(json.dumps(details, indent=4, sort_keys=False))
             else:
                 response = self.sendPostRequestToServer("handleChoice", {
@@ -135,7 +148,28 @@ class Game:
 
 def main():
     game = Game()
-    playerId, name, time = game.buildPlayer()
+    print("Hello! What would you like to do?")
+    print("1. Login by ID")
+    print("2. Register")
+    while True:
+        choice = input()
+        if not ((choice.isnumeric()) and (0 < int(choice) < 3)):
+            print("Illegal choice.")
+        else:
+            break
+
+    if choice == "1":
+        while True:
+            print("Enter player ID:")
+            try:
+                playerId = input()
+                name, time = game.getBasicDetailsForLogin(playerId)
+                break
+            except NoSuchPlayer as e:
+                print(e.reason)
+    else:
+        playerId, name, time = game.buildPlayer()
+
     # i.e., Plaeyer
     game.run(playerId, name, time)  # for player in self._players ....
 
