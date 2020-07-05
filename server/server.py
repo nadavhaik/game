@@ -5,11 +5,16 @@ from enum import Enum
 import json
 import uuid
 import logging
+from pymongo import MongoClient
+import datetime
 
 logger = logging.getLogger('root')
 FORMAT = "[%(filename)s:%(lineno)s - %(funcName)20s() ] %(message)s"
 logging.basicConfig(format=FORMAT)
 logger.setLevel(logging.DEBUG)
+
+db = MongoClient('mongodb://localhost:27017/').Game
+Players = db.Player
 
 
 class GameException(Exception):
@@ -64,29 +69,46 @@ class Skills(dict):
 
 
 class Player(dict):
-    def __init__(self, player_data):
+    def __init__(self, player_data, isNew):
         self.data = player_data
-        self.data['id'] = str(uuid.uuid4())
-        self.data['time_of_the_day'] = 8
-        self.data['skills'] = Skills()
+        if isNew:
+            self.data['_id'] = str(uuid.uuid4())
+            self.data['time_of_the_day'] = 8
+            self.data['skills'] = Skills()
+            self.data['creation_time'] = datetime.datetime.utcnow()
+            self.data['last_update_time'] = datetime.datetime.utcnow()
 
     def get(self, attribute):
         return self.data[attribute]
 
     def set(self, attribute, value):
         self.data[attribute] = value
+        self.updateInDB({attribute: value})
 
     def getSkill(self, skill):
         return self.data['skills'][skill]
 
     def raiseSkill(self, skill, by):
-        self.data['skills'][skill] += by
+        skills = self.data['skills']
+        raisedSkill = skills[skill] + by
+        skills[skill] = raisedSkill
+        self.updateInDB({"skills": skills})
 
     def spendTime(self, by):
-        self.data['time_of_the_day'] += by
+        timeAfterSpending = self.data['time_of_the_day'] + by
+        self.data['time_of_the_day'] = timeAfterSpending
+        self.updateInDB({'time_of_the_day': timeAfterSpending})
 
     def raiseAge(self, by):
-        self.data['age'] += by
+        ageAfterRaising = self.data['age'] + by
+        self.data['age'] = ageAfterRaising
+        self.updateInDB({'age': ageAfterRaising})
+
+    def updateInDB(self, delta):
+        delta['last_update_time'] = datetime.datetime.utcnow()
+        query = {"_id": self.data["_id"]}
+        newvalues = {"$set": delta}
+        Players.update_one(query, newvalues)
 
 
 class InputType(Enum):
@@ -187,7 +209,15 @@ class ChoiceOptions(Enum):
 
 class Game:
     def __init__(self):
-        self.players = []
+        self.players = self._loadPlayersFromDB()
+
+    def _loadPlayersFromDB(self):
+        players = []
+        playersData = Players.find()
+        for playerData in playersData:
+            players.append(Player(playerData, False))
+
+        return players
 
     def _fixDictValues(self, dictToFix):
         for key in dictToFix:
@@ -206,11 +236,11 @@ class Game:
     def _reformatJson(self, dictToFix):
         dictToFix = self._fixDictValues(dictToFix)
 
-        return json.dumps(dictToFix, sort_keys=False)
+        return json.dumps(dictToFix, sort_keys=False, default=str)
 
     def _getPlayerById(self, id):
         for player in self.players:
-            if player.data['id'] == id:
+            if player.data['_id'] == id:
                 return player
         raise PlayerNotFound(f"NO PLAYER WITH ID: {id}")
 
@@ -273,7 +303,7 @@ class Game:
         return self._reformatJson({"status": "SUCCESS"})
 
     def getPlayerById(self, data):
-        player = self._getPlayerById(data['id'])
+        player = self._getPlayerById(data['_id'])
         return self._reformatJson(player.data)
 
     def _reformatTime(self, hour):
@@ -281,15 +311,31 @@ class Game:
 
     def createNewPlayer(self, playerData):
         self._validatePlayer(answers=playerData)
-        player = Player(playerData)
-        print(f"NEW PLAYER CREATED: {player.data['id']}")
+        player = Player(playerData, True)
+        print(f"NEW PLAYER CREATED: {player.data['_id']}")
         self.players.append(player)
+        Players.insert_one(player.data)
         return self._reformatJson({
             "status": "SUCCESS",
-            "playerId": player.data["id"],
+            "playerId": player.data["_id"],
             "name": player.data["name"],
             "time": self._reformatTime(player.data["time_of_the_day"])
         })
+
+    def getBasicDetailsForLogin(self, body):
+        try:
+            player = self._getPlayerById(body["playerId"])
+            return self._reformatJson({
+                "status": "SUCCESS",
+                "playerId": player.data["_id"],
+                "name": player.data["name"],
+                "time": self._reformatTime(player.data["time_of_the_day"])
+            })
+        except PlayerNotFound:
+            return self._reformatJson({
+                "status": "FAILURE",
+                "message": f"NO PLAYER WITH ID: f{body['playerId']}"
+            })
 
     def getRelevantMenu(self, body):
         currentPlayer = self._getPlayerById(body['playerId'])
