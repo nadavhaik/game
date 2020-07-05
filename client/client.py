@@ -7,6 +7,7 @@
 import json
 import sys
 import requests
+import getpass
 
 # Game Class + Game Exceptions --> world.py
 
@@ -34,7 +35,16 @@ class IllegalChoice(GameException):
 class IllegalInput(GameException):
     pass
 
+
 class NoSuchPlayer(GameException):
+    pass
+
+
+class LoginError(GameException):
+    pass
+
+
+class ServerError(GameException):
     pass
 
 
@@ -50,22 +60,23 @@ class Game:
     def __init__(self):
         pass
 
-    def getBasicDetailsForLogin(self, playerId):
-        details = self.sendPostRequestToServer("getBasicDetailsForLogin", {
-            "playerId": playerId
-        })
+    def login(self, loginData):
+        details = self.sendPostRequestToServer("login", loginData)
 
         if details["status"] == "FAILURE":
-            raise NoSuchPlayer(f"NO SUCH PLAYER WITH ID: {playerId}")
+            raise LoginError(details["message"])
 
-        return details["name"], details["time"]
+        return details
 
     def reformatTime(self, hour):
         return str(hour).zfill(2) + ":00"
 
-    def getRelevantMenu(self, playerId, name, time):
+    def getRelevantMenu(self, loginData):
 
-        menu = self.sendPostRequestToServer("getRelevantMenu", {"playerId": playerId})["options"]
+        answer = self.sendPostRequestToServer("getRelevantMenu", loginData)
+        menu = answer["options"]
+        name = answer["name"]
+        time = answer["time"]
         print(f"Hello {name}, it's {time} o'clock. what would you like to do?")
         for i in range(len(menu)):
             print(f"{str(i + 1)}. {menu[i]['string']}")
@@ -74,11 +85,11 @@ class Game:
         choice = input()
         if self.isValidMenuChoice(choice, menu):
             if choice == '*':
-                details = self.sendPostRequestToServer("getPlayerById", {"_id": playerId})
+                details = self.sendPostRequestToServer("getPlayerByLoginData", loginData)
                 print(json.dumps(details, indent=4, sort_keys=False))
             else:
                 response = self.sendPostRequestToServer("handleChoice", {
-                    "playerId": playerId,
+                    "loginData": loginData,
                     "choice": menu[int(choice) - 1]["literal"]
                 })
                 time = self.reformatTime(response["playerData"]["time_of_the_day"])
@@ -109,7 +120,9 @@ class Game:
 
     def createPlayer(self, playerData):
         response = self.sendPostRequestToServer("createNewPlayer", playerData)
-        return response["playerId"], response["name"], response["time"]
+        if response["status"] == "FAILURE":
+            raise ServerError("An unknown error has occured")
+        return playerData["username"], playerData["password"]
 
     def buildPlayer(self):
         # Initialize as None for checking
@@ -122,8 +135,23 @@ class Game:
                     key = question["name"]
                     questionText = question["question"]
                     inputType = question["type"]
-                    if player.get(key, None) is None:
-                        player[key] = self.validateInput(input(questionText + "\n"), inputType)
+                    try:
+                        if player.get(key, None) is None:
+                            if inputType == "PASSWORD":
+                                while True:
+                                    print(questionText)
+                                    password = getpass.getpass()
+                                    print("Re-enter password:")
+                                    reEnterPassword = getpass.getpass()
+                                    if password != reEnterPassword:
+                                        print("Passwords don't match!")
+                                    else:
+                                        break
+                                player[key] = self.validateInput(password, inputType)
+                            else:
+                                player[key] = self.validateInput(input(questionText + "\n"), inputType)
+                    except IllegalChoice as e:
+                        print(e.reason)
                 break
 
             except IllegalInput:
@@ -131,25 +159,22 @@ class Game:
 
         return self.createPlayer(player)
 
-    def getMenuForPlayer(self, playerId, name, time):
+    def getMenuForPlayer(self, loginData):
         while True:
             try:
-                oldTime = time
-                time = self.getRelevantMenu(playerId, name, time)
-                if time is None:
-                    time = oldTime
+                time = self.getRelevantMenu(loginData)
             except IllegalChoice:
                 print("Illegal choice.")
 
-    def run(self, playerId, name, time):
+    def run(self, loginData):
         while True:
-            self.getMenuForPlayer(playerId, name, time)
+            self.getMenuForPlayer(loginData)
 
 
 def main():
     game = Game()
     print("Hello! What would you like to do?")
-    print("1. Login by ID")
+    print("1. Login")
     print("2. Register")
     while True:
         choice = input()
@@ -160,18 +185,20 @@ def main():
 
     if choice == "1":
         while True:
-            print("Enter player ID:")
+            print("Enter username:")
+            username = input()
+            print("Enter password:")
+            password = getpass.getpass()
             try:
-                playerId = input()
-                name, time = game.getBasicDetailsForLogin(playerId)
+                game.login({"username": username, "password": password})
                 break
-            except NoSuchPlayer as e:
+            except LoginError as e:
                 print(e.reason)
     else:
-        playerId, name, time = game.buildPlayer()
+        username, password = game.buildPlayer()
 
     # i.e., Plaeyer
-    game.run(playerId, name, time)  # for player in self._players ....
+    game.run({"username": username, "password": password})  # for player in self._players ....
 
 
 if __name__ == "__main__":

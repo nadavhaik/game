@@ -57,6 +57,14 @@ class EnumNotFound(GameException):
     pass
 
 
+class IncorrectPassword(GameException):
+    pass
+
+
+class UsernameIsTaken(GameException):
+    pass
+
+
 class Skills(dict):
     def __init__(self):
         self['study_level'] = 0
@@ -115,12 +123,22 @@ class InputType(Enum):
     NAME = 1
     POSITIVE_INT = 2
     DOUBLE = 3
+    USERNAME = 4
+    PASSWORD = 5
 
     def getByLiteral(self, literal):
         return self[literal]
 
 
 class QuestionsForNewPlayer(Enum):
+    username = {
+        "question": "Choose username:",
+        "type": InputType.USERNAME
+    }
+    password = {
+        "question": "Choose password:",
+        "type": InputType.PASSWORD
+    }
     name = {
         "question": "What's your name?",
         "type": InputType.NAME
@@ -244,11 +262,38 @@ class Game:
                 return player
         raise PlayerNotFound(f"NO PLAYER WITH ID: {id}")
 
+    def _getPlayerByLoginData(self, loginData):
+        for player in self.players:
+            if player.data["username"] == loginData["username"]:
+                if player.data["password"] == loginData["password"]:
+                    return player
+                raise IncorrectPassword("Incorrect password!")
+
+        raise PlayerNotFound(f"No Player With username {loginData['username']}")
+
     def _validateInput(self, input, inputType):
         if inputType == InputType.NAME:
             return self._validateName(input)
         elif inputType == InputType.POSITIVE_INT:
             return self._validatePositiveInt(input)
+        elif inputType == InputType.USERNAME:
+            return self._validateUsername(input)
+        elif inputType == InputType.PASSWORD:
+            return self._validatePassword(input)
+
+    def _validateUsername(self, username):
+        self._validateName(username)
+        for player in self.players:
+            if player.data["username"] == username:
+                raise UsernameIsTaken(f"Username {username} is already taken")
+
+        return username
+
+    def _validatePassword(self, password):
+        if len(password) < 7:
+            raise IllegalInput("Password must contain at least 7 characters")
+
+        return password
 
     def _validatePositiveInt(self, number):
         try:
@@ -295,8 +340,12 @@ class Game:
         isValid = self._validateInput(givenInput, inputType)
 
         if not isValid:
+            if inputType == InputType.PASSWORD:
+                message = "Invalid password"
+            else:
+                message = f"Invalid input: {givenInput} for type: {inputType}"
             response = {
-                "status": "FAILURE", "message": f"INVALID INPUT: {givenInput} FOR TYPE: {inputType}"
+                "status": "FAILURE", "message": message
             }
             return self._reformatJson(response)
 
@@ -305,6 +354,19 @@ class Game:
     def getPlayerById(self, data):
         player = self._getPlayerById(data['_id'])
         return self._reformatJson(player.data)
+
+    def getPlayerByLoginData(self, loginData):
+        player = self._getPlayerByLoginData(loginData)
+        return self._reformatJson(player.data)
+
+    def login(self, loginData):
+        try:
+            self._getPlayerByLoginData(loginData)
+            return self._reformatJson({"status": "SUCCESS"})
+        except PlayerNotFound:
+            return self._reformatJson({"status": "FAILURE", "message": "NO SUCH PLAYER"})
+        except IncorrectPassword:
+            return self._reformatJson({"status": "FAILURE", "message": "INCORRECT PASSWORD"})
 
     def _reformatTime(self, hour):
         return str(hour).zfill(2) + ":00"
@@ -337,8 +399,8 @@ class Game:
                 "message": f"NO PLAYER WITH ID: f{body['playerId']}"
             })
 
-    def getRelevantMenu(self, body):
-        currentPlayer = self._getPlayerById(body['playerId'])
+    def getRelevantMenu(self, loginData):
+        currentPlayer = self._getPlayerByLoginData(loginData)
         ADULT_OPTIONS = [ChoiceOptions.LEARN_COOKING, ChoiceOptions.LEARN_GUITAR, ChoiceOptions.PLAY_FOOTBALL,
                          ChoiceOptions.MEET_FRIENDS, ChoiceOptions.READ_A_BOOK]
 
@@ -359,6 +421,8 @@ class Game:
 
         response = {
             "status": "SUCCESS",
+            "name": currentPlayer.get("name"),
+            "time": self._reformatTime(currentPlayer.get("time_of_the_day")),
             "options": optionsForResponse
         }
         return self._reformatJson(response)
@@ -383,7 +447,7 @@ class Game:
             player.raiseSkill(skillToRaise, 1)
 
     def handleChoice(self, body):
-        currentPlayer = self._getPlayerById(body['playerId'])
+        currentPlayer = self._getPlayerByLoginData(body['loginData'])
         choice = ChoiceOptions[body['choice']]
         currentPlayer.raiseSkill(choice.value['skill'], 1)
         if choice == ChoiceOptions.SLEEP:
