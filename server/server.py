@@ -265,7 +265,7 @@ class Game:
     def _getPlayerByLoginData(self, loginData):
         for player in self.players:
             if player.data["username"] == loginData["username"]:
-                if player.data["password"] == loginData["password"]:
+                if player.data["password"] == hash(loginData["password"]):
                     return player
                 raise IncorrectPassword("Incorrect password!")
 
@@ -282,7 +282,8 @@ class Game:
             return self._validatePassword(input)
 
     def _validateUsername(self, username):
-        self._validateName(username)
+        if not username.isalnum():
+            raise IllegalInput("Given input isn't alphanumeric.")
         for player in self.players:
             if player.data["username"] == username:
                 raise UsernameIsTaken(f"Username {username} is already taken")
@@ -373,6 +374,7 @@ class Game:
 
     def createNewPlayer(self, playerData):
         self._validatePlayer(answers=playerData)
+        playerData["password"] = hash(playerData["password"])
         player = Player(playerData, True)
         print(f"NEW PLAYER CREATED: {player.data['_id']}")
         self.players.append(player)
