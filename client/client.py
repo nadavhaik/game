@@ -88,12 +88,10 @@ class Game:
                 details = self.sendPostRequestToServer("getPlayerByLoginData", loginData)
                 print(json.dumps(details, indent=4, sort_keys=False))
             else:
-                response = self.sendPostRequestToServer("handleChoice", {
+                self.sendPostRequestToServer("handleChoice", {
                     "loginData": loginData,
                     "choice": menu[int(choice) - 1]["literal"]
                 })
-                time = self.reformatTime(response["playerData"]["time_of_the_day"])
-                return time
         else:
             raise IllegalChoice("Illegal choice")
 
@@ -121,7 +119,7 @@ class Game:
     def createPlayer(self, playerData):
         response = self.sendPostRequestToServer("createNewPlayer", playerData)
         if response["status"] == "FAILURE":
-            raise ServerError("An unknown error has occured")
+            raise ServerError("An unknown error has occurred")
         return playerData["username"], playerData["password"]
 
     def buildPlayer(self):
@@ -162,7 +160,7 @@ class Game:
     def getMenuForPlayer(self, loginData):
         while True:
             try:
-                time = self.getRelevantMenu(loginData)
+                self.getRelevantMenu(loginData)
             except IllegalChoice:
                 print("Illegal choice.")
 
@@ -197,8 +195,7 @@ def main():
     else:
         username, password = game.buildPlayer()
 
-    # i.e., Plaeyer
-    game.run({"username": username, "password": password})  # for player in self._players ....
+    game.run({"username": username, "password": password})
 
 
 if __name__ == "__main__":

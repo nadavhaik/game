@@ -1,5 +1,4 @@
 from random import random
-
 from flask import Flask, request, Response
 from enum import Enum
 import json
@@ -7,6 +6,7 @@ import uuid
 import logging
 from pymongo import MongoClient
 import datetime
+import hashlib
 
 logger = logging.getLogger('root')
 FORMAT = "[%(filename)s:%(lineno)s - %(funcName)20s() ] %(message)s"
@@ -14,7 +14,7 @@ logging.basicConfig(format=FORMAT)
 logger.setLevel(logging.DEBUG)
 
 db = MongoClient('mongodb://localhost:27017/').Game
-Players = db.Player
+PlayersCollection = db.Player
 
 
 class GameException(Exception):
@@ -57,7 +57,7 @@ class EnumNotFound(GameException):
     pass
 
 
-class IncorrectPassword(GameException):
+class LoginError(GameException):
     pass
 
 
@@ -98,30 +98,27 @@ class Player(dict):
 
     def raiseSkill(self, skill, by):
         skills = self.data['skills']
-        raisedSkill = skills[skill] + by
-        skills[skill] = raisedSkill
+        skills[skill] += by
         self.updateInDB({"skills": skills})
 
     def spendTime(self, by):
-        timeAfterSpending = self.data['time_of_the_day'] + by
-        self.data['time_of_the_day'] = timeAfterSpending
-        self.updateInDB({'time_of_the_day': timeAfterSpending})
+        self.data['time_of_the_day'] += by
+        self.updateInDB({'time_of_the_day': self.data['time_of_the_day']})
 
     def raiseAge(self, by):
-        ageAfterRaising = self.data['age'] + by
-        self.data['age'] = ageAfterRaising
-        self.updateInDB({'age': ageAfterRaising})
+        self.data['age'] += by
+        self.updateInDB({'age': self.data['age']})
 
     def updateInDB(self, delta):
         delta['last_update_time'] = datetime.datetime.utcnow()
         query = {"_id": self.data["_id"]}
         newvalues = {"$set": delta}
-        Players.update_one(query, newvalues)
+        PlayersCollection.update_one(query, newvalues)
 
 
 class InputType(Enum):
     NAME = 1
-    POSITIVE_INT = 2
+    UNSIGNED = 2
     DOUBLE = 3
     USERNAME = 4
     PASSWORD = 5
@@ -145,11 +142,11 @@ class QuestionsForNewPlayer(Enum):
     }
     age = {
         "question": "What's your age?",
-        "type": InputType.POSITIVE_INT
+        "type": InputType.UNSIGNED
     }
     height = {
         "question": "What's your height (cm)?",
-        "type": InputType.POSITIVE_INT
+        "type": InputType.UNSIGNED
     }
     city = {
         "question": "Where do you live?",
@@ -227,15 +224,10 @@ class ChoiceOptions(Enum):
 
 class Game:
     def __init__(self):
-        self.players = self._loadPlayersFromDB()
-
-    def _loadPlayersFromDB(self):
-        players = []
-        playersData = Players.find()
+        self.players = []
+        playersData = PlayersCollection.find()
         for playerData in playersData:
-            players.append(Player(playerData, False))
-
-        return players
+            self.players.append(Player(playerData, False))
 
     def _fixDictValues(self, dictToFix):
         for key in dictToFix:
@@ -256,6 +248,9 @@ class Game:
 
         return json.dumps(dictToFix, sort_keys=False, default=str)
 
+    def _getHashValue(self, string):
+        return hashlib.md5(string.encode('utf8')).hexdigest()
+
     def _getPlayerById(self, id):
         for player in self.players:
             if player.data['_id'] == id:
@@ -265,17 +260,16 @@ class Game:
     def _getPlayerByLoginData(self, loginData):
         for player in self.players:
             if player.data["username"] == loginData["username"]:
-                if player.data["password"] == hash(loginData["password"]):
+                if player.data["password"] == self._getHashValue(loginData["password"]):
                     return player
-                raise IncorrectPassword("Incorrect password!")
 
-        raise PlayerNotFound(f"No Player With username {loginData['username']}")
+        raise LoginError("Incorrect username/password")
 
     def _validateInput(self, input, inputType):
         if inputType == InputType.NAME:
             return self._validateName(input)
-        elif inputType == InputType.POSITIVE_INT:
-            return self._validatePositiveInt(input)
+        elif inputType == InputType.UNSIGNED:
+            return self._validateUnsign(input)
         elif inputType == InputType.USERNAME:
             return self._validateUsername(input)
         elif inputType == InputType.PASSWORD:
@@ -296,7 +290,7 @@ class Game:
 
         return password
 
-    def _validatePositiveInt(self, number):
+    def _validateUnsign(self, number):
         try:
             num = int(number)
             if num > 0:
@@ -366,7 +360,7 @@ class Game:
             return self._reformatJson({"status": "SUCCESS"})
         except PlayerNotFound:
             return self._reformatJson({"status": "FAILURE", "message": "NO SUCH PLAYER"})
-        except IncorrectPassword:
+        except LoginError:
             return self._reformatJson({"status": "FAILURE", "message": "INCORRECT PASSWORD"})
 
     def _reformatTime(self, hour):
@@ -374,11 +368,11 @@ class Game:
 
     def createNewPlayer(self, playerData):
         self._validatePlayer(answers=playerData)
-        playerData["password"] = hash(playerData["password"])
+        playerData["password"] = self._getHashValue(playerData["password"])
         player = Player(playerData, True)
         print(f"NEW PLAYER CREATED: {player.data['_id']}")
         self.players.append(player)
-        Players.insert_one(player.data)
+        PlayersCollection.insert_one(player.data)
         return self._reformatJson({
             "status": "SUCCESS",
             "playerId": player.data["_id"],
@@ -473,25 +467,24 @@ def invoke_action(action):
     if request.method == 'POST' and request.json is None:
         body = json.dumps({"status": "FAILURE", "message": "INVALID FORMAT"}, sort_keys=False)
         return Response(body, mimetype='text/json')
-    if not hasattr(game, action):
-        body = json.dumps({"status": "FAILURE", "message": f"NO SUCH FUNCTION: {action}"}, sort_keys=False)
-        return Response(body, mimetype='text/json')
-    if not isPermitted(action):
-        body = json.dumps({"status": "FAILURE", "message": f"NOT PERMITTED FOR ACTION: {action}"}, sort_keys=False)
+    if (not hasattr(game, action)
+            or not isPermitted(action)):
+        body = json.dumps({"status": "FAILURE", "message": f"NO SUCH SERVICE: {action}"}, sort_keys=False)
         return Response(body, mimetype='text/json')
 
     content = request.json
     function = getattr(game, action)
 
-    if request.method == 'POST':
-        body = function(content)
-    else:  # GET
-        body = function()
-    return Response(body, mimetype='text/json')
-    # except Exception as e:
-    #     body = json.dumps({"Status": "FAILURE", "Message": "AN INTERNAL ERROR HAS OCCURRED"}, sort_keys=False)
-    #     logger.error(e)
-    #     return Response(body, mimetype='text/json')
+    try:
+        if request.method == 'POST':
+            body = function(content)
+        else:  # GET
+            body = function()
+        return Response(body, mimetype='text/json')
+    except Exception as e:
+        body = json.dumps({"status": "FAILURE", "message": "AN INTERNAL ERROR HAS OCCURRED"}, sort_keys=False)
+        logger.exception(e)
+        return Response(body, mimetype='text/json')
 
 
 def isPermitted(action):
