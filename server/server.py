@@ -130,31 +130,38 @@ class InputType(Enum):
 class QuestionsForNewPlayer(Enum):
     username = {
         "question": "Choose username:",
-        "type": InputType.USERNAME
+        "type": InputType.USERNAME,
+        "html_type": "text"
     }
     password = {
         "question": "Choose password:",
-        "type": InputType.PASSWORD
+        "type": InputType.PASSWORD,
+        "html_type": "password"
     }
     name = {
         "question": "What's your name?",
-        "type": InputType.NAME
+        "type": InputType.NAME,
+        "html_type": "text"
     }
     age = {
         "question": "What's your age?",
-        "type": InputType.UNSIGNED
+        "type": InputType.UNSIGNED,
+        "html_type": "number"
     }
     height = {
         "question": "What's your height (cm)?",
-        "type": InputType.UNSIGNED
+        "type": InputType.UNSIGNED,
+        "html_type": "number"
     }
     city = {
         "question": "Where do you live?",
-        "type": InputType.NAME
+        "type": InputType.NAME,
+        "html_type": "text"
     }
     job = {
         "question": "What is your profession?",
-        "type": InputType.NAME
+        "type": InputType.NAME,
+        "html_type": "text"
     }
 
     @staticmethod
